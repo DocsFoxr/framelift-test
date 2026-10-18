@@ -89,6 +89,7 @@ Enhanced on a laptop CPU.
 - [How it works](#how-it-works)
 - [Installation](#installation)
 - [Quick start](#quick-start)
+- [The visual version (`framelift gui`)](#the-visual-version-framelift-gui)
 - [Finding the best settings (`framelift tune`)](#finding-the-best-settings-framelift-tune)
 - [Choosing the part to enhance (`framelift trim`)](#choosing-the-part-to-enhance-framelift-trim)
 - [Recipes](#recipes)
@@ -145,7 +146,7 @@ skipped too, since it's there to catch problems with the AI.
 
 ## Installation
 
-You need **Python 3.9+** and **[FFmpeg](https://ffmpeg.org/download.html)** available
+You need **Python 3.10+** and **[FFmpeg](https://ffmpeg.org/download.html)** available
 on your `PATH` (`ffmpeg -version` should work in a terminal). The quickest way to get it:
 
 | System | Command |
@@ -221,6 +222,43 @@ framelift -i input.mp4 -o output.mp4
 
 The defaults are a good starting point: the fast `realesr-animevideov3` model, a 1.5x
 upscale and a 45% AI blend.
+
+## The visual version (`framelift gui`)
+
+Prefer clicking to typing? framelift also comes as a page in your browser:
+
+```bash
+pip install "framelift-video[gui]"
+framelift gui
+```
+
+Your browser opens on a local page (served from your computer only: the videos never
+leave it). There you can:
+
+- **choose the video** and, optionally, only part of it (from / to, like `1:30`);
+- **pick the settings**: AI model, AI strength, how much to enlarge (or keep the size),
+  pre-cleaning, smoother motion with RIFE, and where to run (NVIDIA GPU, Intel GPU, CPU);
+- **preview one frame** with a before/after slider, so you can try settings in seconds
+  before processing the whole video;
+- **run it** with a progress bar and the time left, and **stop** whenever you want: what's
+  done is kept as a valid MP4, as with Ctrl+C.
+
+A run keeps going if you close or reload the tab, or the connection drops (long runs
+take hours): open the page again, or click **Show progress**, to follow it. Close the
+terminal window (or press Ctrl+C in it) to end everything.
+
+Results go to a `framelift_outputs` folder in the directory where you ran the command
+(`--output-dir` changes it), named after the video and never replacing an existing file.
+
+| Option | What it does |
+|---|---|
+| `--output-dir FOLDER` | Where the enhanced videos are saved. |
+| `--port N` | Port for the page (default: 7860, or the next free one). |
+| `--host ADDRESS` | `0.0.0.0` lets other devices on your network open it (default: this computer only). |
+| `--share` | Also creates a temporary public link through Gradio's servers. Anyone with the link can use it while it runs. |
+| `--no-browser` | Don't open the browser automatically. |
+
+The page uses [Gradio](https://www.gradio.app) and needs Python 3.10 or newer.
 
 ## Finding the best settings (`framelift tune`)
 
@@ -925,6 +963,8 @@ framelift/
 │   ├── tune_cli.py    # the `framelift tune` subcommand
 │   ├── trim.py        # FrameRange / trim_video: frame-exact, lossless cuts
 │   ├── join.py        # framelift join: parts of a resumed run into one video
+│   ├── gui.py         # the visual version (framelift gui)
+│   ├── gui_cli.py     # the `framelift gui` subcommand
 │   ├── join_cli.py    # the `framelift join` subcommand
 │   ├── trim_cli.py    # the `framelift trim` subcommand and --pick-range
 │   ├── picker.py      # pick_range: the player window with a timeline (Tk + VLC)

@@ -283,7 +283,7 @@ def test_without_the_ai_frames_are_only_resized(make_video, tmp_path):
 
     originals = [image for _, image in read_frames(clip, [1, 2, 3])]
     assert len(seen) == 3
-    for original, (source, output) in zip(originals, seen):
+    for original, (source, output) in zip(originals, seen, strict=True):
         assert (source == original).all() and (output == original).all()
 
 
@@ -313,7 +313,7 @@ def test_identical_frames_reuse_the_result(make_video, tmp_path):
         assert result.frames_reused == (5 if reuse else 0)
         outputs.append(_decoded(tmp_path / f"reuse_{reuse}.mp4"))
     assert len(outputs[0]) == 30
-    assert all((a == b).all() for a, b in zip(*outputs))
+    assert all((a == b).all() for a, b in zip(*outputs, strict=True))
 
 
 def _decoded(path):

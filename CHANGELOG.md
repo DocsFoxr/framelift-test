@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.0.0] — 2026-10-17
+
+### Added
+
+- **The visual version: `framelift gui`.** A page in your browser, served from this
+  computer, to enhance videos without the command line. Install it with
+  `pip install "framelift-video[gui]"`.
+  - Choose the video and, optionally, only part of it (from / to).
+  - Every main setting: model, AI strength, size, pre-cleaning, RIFE, device, FP16,
+    quality.
+  - **Preview one frame** with a before/after slider, to try settings in seconds.
+  - A progress bar with the time left, and a Stop button that keeps what's done, as with
+    Ctrl+C; when stopped, it says where to continue from.
+  - A run belongs to the program, not to the browser tab: closing or reloading the page,
+    or a dropped connection, doesn't stop it. Opening the page again (or **Show
+    progress**) picks it back up. One video is processed at a time, and previews wait
+    until it's done.
+  - Results go to `framelift_outputs/` (or `--output-dir`), never replacing a file.
+    `--port`, `--host`, `--share` and `--no-browser` control how the page is served.
+  - It's built on the public API (`on_progress`, `stop_event`), in `framelift.gui`.
+
+### Changed (breaking)
+
+- **framelift needs Python 3.10 or newer.** Python 3.9 reached its end of life in October
+  2025, and Gradio, which the visual version uses, needs 3.10. Everything else works as in
+  1.4: same flags, defaults, API and output.
+
 ## [1.4.3] — 2026-10-16
 
 ### Fixed

@@ -7,9 +7,8 @@ The suggestions are heuristics — good starting points, not ground truth.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable
 
 import cv2
 import numpy as np

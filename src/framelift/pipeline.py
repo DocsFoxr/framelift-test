@@ -25,9 +25,9 @@ import queue
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from concurrent.futures import Future
 from pathlib import Path
-from typing import Callable, Union
 
 import numpy as np
 from tqdm import tqdm
@@ -55,7 +55,7 @@ from .video import FrameReader, SourceFrame, probe_video
 
 log = logging.getLogger(__name__)
 
-PathLike = Union[str, Path]
+PathLike = str | Path
 
 BLACK_FRAME_THRESHOLD = 3.0
 """Mean brightness (0–255) below which the first frame is considered broken."""

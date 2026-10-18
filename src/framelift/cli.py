@@ -41,6 +41,9 @@ examples:
   framelift -i in.mp4 -o smooth.mp4 --output-fps 60 --interpolate
   framelift -i in.mp4 -o smooth.mp4 --no-ai --same-resolution --interpolate
 
+  # The visual version, in your browser (needs: pip install "framelift-video[gui]")
+  framelift gui
+
   # Resume a run that stopped after frame 1200 (into a new file), then join the parts
   framelift -i in.mp4 -o out_part2.mp4 --start-frame 1201
   framelift join out.mp4 out_part2.mp4 -o out_full.mp4
@@ -401,6 +404,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .join_cli import main as join_main
 
         return join_main(argv[1:])
+    if argv[:1] == ["gui"]:
+        from .gui_cli import main as gui_main
+
+        return gui_main(argv[1:])
 
     parser = build_parser()
     args = parser.parse_args(argv)

@@ -9,7 +9,7 @@ description = "Upscale, restore and smooth videos with Real-ESRGAN and RIFE, on 
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "LICENSE-BasicSR.txt"]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 authors = [{ name = "Pedro Sofiati de Sá" }]
 keywords = [
     "video", "upscaling", "super-resolution", "real-esrgan", "restoration",
@@ -23,7 +23,6 @@ classifiers = [
     "Environment :: GPU :: NVIDIA CUDA",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -44,6 +43,8 @@ dependencies = [
 dev = ["pytest>=7", "ruff>=0.4"]
 # The visual range picker (framelift trim / --pick-range). Also needs VLC media player.
 picker = ["python-vlc>=3.0.12118"]
+# The visual version (framelift gui): a page in the browser, served from this computer.
+gui = ["gradio>=6.0"]
 # OpenVINO: --backend openvino on CPU and --device igpu (Intel Iris/UHD/Arc GPUs).
 intel = ["openvino>=2024.0"]
 
@@ -73,7 +74,7 @@ markers = ["slow: end-to-end tests that need PyTorch, Real-ESRGAN weights and FF
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "N"]

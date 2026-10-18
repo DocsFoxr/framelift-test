@@ -10,10 +10,9 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 import cv2
 

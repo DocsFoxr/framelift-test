@@ -62,7 +62,7 @@ def join_videos(parts: Sequence[str | Path], output: str | Path) -> JoinResult:
         )
 
     layouts = [_layout(part) for part in parts]
-    for part, layout in zip(parts[1:], layouts[1:]):
+    for part, layout in zip(parts[1:], layouts[1:], strict=True):
         differences = _differences(layouts[0], layout)
         if differences:
             raise InvalidOptionError(

@@ -32,7 +32,6 @@ import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Union
 
 import cv2
 import torch
@@ -75,7 +74,7 @@ from .video import VideoInfo, probe_video, read_frame_pairs
 
 log = logging.getLogger(__name__)
 
-PathLike = Union[str, Path]
+PathLike = str | Path
 
 BEST_MODELS = {"live": "realesrgan-x4plus", "anime": "realesrgan-x4plus-anime-6B"}
 BEST_TIME_BUDGET_SECONDS = 10 * 60
@@ -762,7 +761,7 @@ def _quiet(*names: str):
     try:
         yield
     finally:
-        for logger, level in zip(loggers, levels):
+        for logger, level in zip(loggers, levels, strict=True):
             logger.setLevel(level)
 
 
