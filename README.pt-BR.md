@@ -465,12 +465,30 @@ Sem área de trabalho (servidor, SSH)? Informe os tempos, e nenhuma janela é ab
 framelift trim -i show.mp4 --start 1:30 --end 2:45.5
 ```
 
+### Um corte pra assistir ou compartilhar (`--playable`)
+
+A cópia sem perdas é a melhor entrada pro framelift, mas é pesada pra *assistir*: os
+players não conseguem decodificá-la na GPU, e o bitrate é enorme, então ela pode travar,
+principalmente com vários vídeos ao mesmo tempo. Pra um corte de assistir ou compartilhar,
+acrescente `--playable`:
+
+```bash
+framelift trim -i show.mp4 --start 1:30 --end 2:45.5 --playable
+```
+
+Ele continua cortado nos frames exatos, com o áudio sincronizado, mas é salvo em H.264
+comum (CRF 18, visualmente quase sem perdas) e AAC, que qualquer player decodifica na GPU.
+Fica uma fração do tamanho, sai bem mais rápido e recebe o nome
+`<entrada>_trim_<primeiro>-<último>_playable.mp4`, pra nunca se misturar com um corte sem
+perdas. Como não é idêntico pixel a pixel, corte sem `--playable` o que você for melhorar.
+
 | Flag | Padrão | Descrição |
 | --- | --- | --- |
 | `-i`, `--input VIDEO` | *obrigatório* | Vídeo a cortar. |
 | `-o`, `--output MP4` | `<entrada>_trim_<primeiro>-<último>.mp4` | Onde salvar o corte (por padrão, ao lado da entrada). |
 | `--start TEMPO` | o começo | Início, sem a janela: segundos (`90.5`), `M:SS` (`1:30`) ou `H:MM:SS` (`1:02:03`). |
 | `--end TEMPO` | o fim | Fim, nos mesmos formatos. Informe um dos dois, ou os dois, para não abrir a janela. |
+| `--playable` | desligado | Um corte pra assistir ou compartilhar: H.264 comum (CRF 18) e AAC em vez de sem perdas. Menor, mais rápido, toca em qualquer lugar, mas não é idêntico pixel a pixel. |
 | `-v`, `-q` | | Mais detalhes / só avisos e erros. |
 
 Códigos de saída: `0` salvo, `1` erro ou janela fechada sem escolher, `130`

@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] — 2026-10-17
+
+### Added
+
+- **`framelift trim --playable`: a cut to watch or share.** The default cut is lossless,
+  the best input for enhancing, but heavy to play: GPUs can't decode lossless H.264, and
+  the bitrate is huge (a 5-second 1080p cut: 22 MB lossless, 2.9 MB playable), so it can
+  stutter in VLC and similar players, especially several at once. `--playable` cuts on
+  the same exact frames, with the audio in sync, but saves ordinary H.264 (CRF 18,
+  visually near-lossless, yuv420p) and AAC, which any player decodes on the GPU.
+  - Named `<input>_trim_<first>-<last>_playable.mp4`, so it never mixes with (or gets
+    reused as) a lossless cut.
+  - From Python: `trim_video(..., playable=True)`.
+
+### Compatibility
+
+- Every flag, default, API and output from 2.0 is unchanged; without `--playable`, cuts
+  are lossless as before.
+
 ## [2.0.0] — 2026-10-17
 
 ### Added

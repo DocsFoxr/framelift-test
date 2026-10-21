@@ -32,9 +32,12 @@ examples:
   # Pick and enhance in one go
   framelift -i concert.mp4 -o concert_hd.mp4 --pick-range
 
+  # A cut to watch or share rather than to enhance: smaller, plays everywhere
+  framelift trim -i concert.mp4 --start 1:30 --end 2:45.5 --playable
+
 The cut is a new file (the original isn't touched), cut on the exact frame without
 losing quality. Use it as the input from then on: resuming with --start-frame refers
-to it.
+to it. Lossless video is heavy to play, though: for a cut to watch, use --playable.
 """
 
 
@@ -63,6 +66,13 @@ def build_trim_parser() -> argparse.ArgumentParser:
         "--end", metavar="TIME",
         help="End time instead of the window, same formats. (default: the end)",
     )  # fmt: skip
+    parser.add_argument(
+        "--playable", action="store_true",
+        help="Make a cut to watch or share instead of one to enhance: ordinary H.264 "
+             "(near-lossless, CRF 18) and AAC, which any player decodes on the GPU. Much "
+             "smaller and quicker, but not pixel-exact. (default: a lossless cut, the best "
+             "input for framelift, but heavy to play)",
+    )  # fmt: skip
     parser.add_argument("-v", "--verbose", action="count", default=0, help="Show more detail.")
     parser.add_argument(
         "-q", "--quiet", action="count", default=0, help="Only show warnings and errors."
@@ -76,14 +86,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         if args.start is None and args.end is None:
-            result = pick_and_trim(args.input, args.output)
+            result = pick_and_trim(args.input, args.output, playable=args.playable)
         else:
             video = probe_video(args.input)
             start = None if args.start is None else parse_time(args.start)
             end = None if args.end is None else parse_time(args.end)
             frames = range_from_times(video, start, end)
-            result = trim_video(args.input, args.output or default_trim_path(args.input, frames),
-                                frames)  # fmt: skip
+            output = args.output or default_trim_path(args.input, frames, playable=args.playable)
+            result = trim_video(args.input, output, frames, playable=args.playable)
     except KeyboardInterrupt:
         log.warning("Cancelled.")
         return 130
@@ -95,11 +105,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         log.warning("No range chosen, so nothing was cut.")
         return 1
 
-    print(render_summary(result))
+    print(render_summary(result, playable=args.playable))
     return 0
 
 
-def pick_and_trim(input_path, output_path=None) -> TrimResult | None:
+def pick_and_trim(input_path, output_path=None, *, playable=False) -> TrimResult | None:
     """Open the range picker and cut what's chosen; ``None`` if the window was cancelled.
 
     If a cut of exactly that range already exists (say, from a run that was stopped),
@@ -112,28 +122,36 @@ def pick_and_trim(input_path, output_path=None) -> TrimResult | None:
     if frames is None:
         return None
 
-    output = Path(output_path) if output_path else default_trim_path(input_path, frames)
+    output = Path(output_path) if output_path else default_trim_path(input_path, frames,
+                                                                     playable=playable)  # fmt: skip
     if output_path is None and output.exists():
         log.info("Reusing the cut made earlier for this range: %s", output)
         has_audio = _probe_streams(output)["audio"]
         return TrimResult(output.resolve(), frames, probe_video(output).frame_count, has_audio)
-    return trim_video(input_path, output, frames)
+    return trim_video(input_path, output, frames, playable=playable)
 
 
-def render_summary(result: TrimResult) -> str:
+def render_summary(result: TrimResult, *, playable: bool = False) -> str:
     source_fps = probe_video(result.path).fps
     path = str(result.path)
     shown = f'"{path}"' if " " in path else path
     stem = Path(path).stem
-    return "\n".join(
-        [
-            "",
-            f"Saved {result.path}",
-            f"  {result.frame_range.describe(source_fps)} of the original, "
-            f"{result.frames:,} frames{'' if result.audio else ', no audio'}",
-            "",
-            "Next (it's the input from now on, also for --start-frame):",
-            f"  framelift tune -i {shown}",
-            f"  framelift -i {shown} -o {stem}_enhanced.mp4",
-        ]
-    )
+    lines = [
+        "",
+        f"Saved {result.path}",
+        f"  {result.frame_range.describe(source_fps)} of the original, "
+        f"{result.frames:,} frames{'' if result.audio else ', no audio'}",
+        "",
+    ]
+    if playable:
+        return "\n".join([
+            *lines,
+            "A copy to watch or share (H.264 and AAC, plays everywhere). It isn't",
+            "pixel-exact: to enhance this part, cut it again without --playable.",
+        ])  # fmt: skip
+    return "\n".join([
+        *lines,
+        "Next (it's the input from now on, also for --start-frame):",
+        f"  framelift tune -i {shown}",
+        f"  framelift -i {shown} -o {stem}_enhanced.mp4",
+    ])  # fmt: skip

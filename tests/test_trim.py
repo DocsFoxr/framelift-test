@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytest
 
 from framelift import FrameRange, InvalidOptionError, VideoInfo, probe_video, trim_video
@@ -165,3 +166,90 @@ def test_trim_command_rejects_a_bad_time(h264_with_audio):
     from framelift.cli import main
 
     assert main(["trim", "-i", str(h264_with_audio), "--start", "soon"]) == 1
+
+
+# -- playable cuts -----------------------------------------------------------------------
+
+
+def _streams(path):
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries",
+         "stream=codec_type,codec_name,profile,pix_fmt,width,height,start_time,duration",
+         "-of", "json", str(path)],
+        capture_output=True, text=True, check=True,
+    ).stdout  # fmt: skip
+    return {s["codec_type"]: s for s in json.loads(probe)["streams"]}
+
+
+def _frames(path):
+    capture = cv2.VideoCapture(str(path))
+    frames = []
+    while True:
+        ok, image = capture.read()
+        if not ok:
+            break
+        frames.append(image.astype(float))
+    capture.release()
+    return frames
+
+
+@needs_ffmpeg
+def test_playable_cut_is_frame_exact_and_plays_everywhere(h264_with_audio, tmp_path):
+    output = tmp_path / "cut.mp4"
+    result = trim_video(h264_with_audio, output, FrameRange(17, 41), show_progress=False,
+                        playable=True)  # fmt: skip
+    assert result.frames == 25 and result.audio
+
+    streams = _streams(output)
+    # Ordinary H.264 (not the lossless 4:4:4 profile GPUs can't decode) and AAC.
+    assert streams["video"]["profile"] == "High" and streams["video"]["pix_fmt"] == "yuv420p"
+    assert streams["audio"]["codec_name"] == "aac"
+    # The same frames as 17–41 of the original: each is closest to its counterpart (a
+    # tiny, busy test pattern at CRF 18 is off by a few levels; real video, by less).
+    cut, original = _frames(output), _frames(h264_with_audio)
+    for index, frame in enumerate(cut):
+        errors = [np.abs(frame - other).mean() for other in original]
+        assert int(np.argmin(errors)) == 16 + index and errors[16 + index] < 6
+
+
+@needs_ffmpeg
+def test_playable_cut_keeps_the_audio_in_sync(h264_with_audio, tmp_path):
+    output = tmp_path / "cut.mp4"
+    trim_video(h264_with_audio, output, FrameRange(31, 45), show_progress=False, playable=True)
+    streams = _streams(output)
+    assert abs(float(streams["video"]["start_time"]) - float(streams["audio"]["start_time"])) < 0.03
+    assert float(streams["audio"]["duration"]) == pytest.approx(15 / 30, abs=0.03)
+
+
+@needs_ffmpeg
+def test_playable_cut_of_odd_sized_video(tmp_path):
+    """yuv420p needs even dimensions: an odd-sized source loses its last row/column."""
+    source = tmp_path / "odd.mp4"
+    subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=95x63:rate=24",
+         "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv444p", str(source)],
+        check=True,
+    )  # fmt: skip
+    output = tmp_path / "cut.mp4"
+    trim_video(source, output, FrameRange(1, 12), show_progress=False, playable=True)
+    video = _streams(output)["video"]
+    assert (video["width"], video["height"], video["pix_fmt"]) == (94, 62, "yuv420p")
+
+
+def test_playable_cuts_get_their_own_name():
+    frames = FrameRange(301, 2565)
+    assert default_trim_path("clip.mkv", frames) == Path("clip_trim_301-2565.mp4")
+    assert default_trim_path("clip.mkv", frames, playable=True) == Path(
+        "clip_trim_301-2565_playable.mp4"
+    )
+
+
+@needs_ffmpeg
+def test_trim_command_playable(h264_with_audio, capsys):
+    from framelift.cli import main
+
+    assert main(["trim", "-i", str(h264_with_audio), "--start", "0.5", "--end", "1",
+                 "--playable", "-q"]) == 0  # fmt: skip
+    made = list(h264_with_audio.parent.glob("source_trim_*_playable.mp4"))
+    assert len(made) == 1 and _streams(made[0])["audio"]["codec_name"] == "aac"
+    assert "watch or share" in capsys.readouterr().out

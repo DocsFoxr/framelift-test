@@ -455,12 +455,29 @@ No desktop (a server, SSH)? Give the times instead and no window opens:
 framelift trim -i concert.mp4 --start 1:30 --end 2:45.5
 ```
 
+### A cut to watch or share (`--playable`)
+
+The lossless copy is the best input for framelift, but it's heavy to *watch*: players
+can't decode it on the GPU, and the bitrate is huge, so it can stutter, especially
+several at once. For a cut to watch or share, add `--playable`:
+
+```bash
+framelift trim -i concert.mp4 --start 1:30 --end 2:45.5 --playable
+```
+
+It's still cut on the exact frames, with the audio in sync, but saved as ordinary H.264
+(CRF 18, visually near-lossless) and AAC, which any player decodes on the GPU. It's a
+fraction of the size and much quicker to make, and it's named
+`<input>_trim_<first>-<last>_playable.mp4`, so it never mixes with a lossless cut. Since
+it isn't pixel-exact, cut without `--playable` for anything you'll enhance.
+
 | Flag | Default | Description |
 | --- | --- | --- |
 | `-i`, `--input VIDEO` | *required* | Video to cut. |
 | `-o`, `--output MP4` | `<input>_trim_<first>-<last>.mp4` | Where to save the cut (next to the input by default). |
 | `--start TIME` | the beginning | Start time, without the window: seconds (`90.5`), `M:SS` (`1:30`) or `H:MM:SS` (`1:02:03`). |
 | `--end TIME` | the end | End time, same formats. Give either one, or both, to skip the window. |
+| `--playable` | off | A cut to watch or share: ordinary H.264 (CRF 18) and AAC instead of lossless. Smaller, quicker, plays everywhere, but not pixel-exact. |
 | `-v`, `-q` | | More detail / only warnings and errors. |
 
 Exit codes: `0` saved, `1` error or the window was closed without choosing, `130`

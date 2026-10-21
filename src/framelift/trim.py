@@ -14,7 +14,13 @@ pixels as the original:
 * audio: ALAC (lossless), so it can be cut on the exact sample. It's converted to AAC
   when the enhanced video is saved, since ALAC isn't widely playable in an MP4.
 
-Lossless video is big (roughly 10–30x the original), which is fine for a working copy.
+Lossless video is big (roughly 10–30x the original), which is fine for a working copy,
+but it's heavy to *watch*: players can't use the GPU for it, and the bitrate is huge.
+
+With ``playable`` (``--playable``), the cut is meant for watching or sharing instead: still
+cut on the exact frame, but saved as ordinary H.264 (CRF 18, visually near-lossless) with
+AAC audio, which any player decodes on the GPU. It's a fraction of the size and much
+quicker to make, but it isn't pixel-exact, so keep the default for cuts to enhance.
 """
 
 from __future__ import annotations
@@ -38,6 +44,9 @@ from .video import VideoInfo, probe_video
 log = logging.getLogger(__name__)
 
 SEEK_MARGIN_SECONDS = 0.001
+
+PLAYABLE_CRF = 18
+"""Quality of ``--playable`` cuts: lower is better and bigger (18 is visually near-lossless)."""
 """Seek this much before the first frame, so rounding (some containers store times in
 whole milliseconds) can never skip it. The extra audio is trimmed off again."""
 
@@ -121,10 +130,14 @@ def range_from_times(video: VideoInfo, start: float | None, end: float | None) -
     return FrameRange(first, last)
 
 
-def default_trim_path(input_path: str | Path, frame_range: FrameRange) -> Path:
-    """``clip.mkv`` → ``clip_trim_301-2565.mp4``, next to the original."""
+def default_trim_path(
+    input_path: str | Path, frame_range: FrameRange, *, playable: bool = False
+) -> Path:
+    """``clip.mkv`` → ``clip_trim_301-2565.mp4``, next to the original
+    (``clip_trim_301-2565_playable.mp4`` for a playable cut, so the two never mix up)."""
     path = Path(input_path)
-    return path.with_name(f"{path.stem}_trim_{frame_range.start}-{frame_range.end}.mp4")
+    suffix = "_playable" if playable else ""
+    return path.with_name(f"{path.stem}_trim_{frame_range.start}-{frame_range.end}{suffix}.mp4")
 
 
 # -- cutting ------------------------------------------------------------------------------
@@ -151,8 +164,12 @@ def trim_video(
     frame_range: FrameRange,
     *,
     show_progress: bool = True,
+    playable: bool = False,
 ) -> TrimResult:
-    """Save ``frame_range`` of ``input_path`` as a new, losslessly cut MP4.
+    """Save ``frame_range`` of ``input_path`` as a new MP4, cut on the exact frame.
+
+    By default the copy is lossless (the same pixels as the original), for enhancing.
+    With ``playable``, it's ordinary H.264 and AAC instead, for watching or sharing.
 
     The file is written under a temporary name and only renamed once FFmpeg finishes,
     so an interrupted cut never leaves a half-written file behind.
@@ -190,7 +207,7 @@ def trim_video(
         # start instead: slower, but always exact.
         for mode in ("seek", "decode"):
             frames = _cut(mode, input_path, temp, offset, frame_range, video.fps,
-                          streams["audio"], show_progress)  # fmt: skip
+                          streams["audio"], show_progress, playable)  # fmt: skip
             if frames == expected:
                 break
             log.debug("Cutting by %s gave %d frames instead of %d.", mode, frames, expected)
@@ -212,11 +229,14 @@ def trim_video(
     return TrimResult(output_path, frame_range, frames, streams["audio"])
 
 
-def _cut(mode, source, target, offset, frame_range, fps, audio, show_progress) -> int:
+def _cut(mode, source, target, offset, frame_range, fps, audio, show_progress,
+         playable=False) -> int:  # fmt: skip
     """Run one cutting strategy; returns the frames in ``target`` (0 if it failed)."""
-    for pixel_format in (None, "yuv444p"):  # a few sources (e.g. RGB) need the fallback
+    # Lossless keeps the source's pixel format, with yuv444p as the fallback for the few
+    # (e.g. RGB) that lossless H.264 can't keep; playable is always yuv420p.
+    for pixel_format in ("yuv420p",) if playable else (None, "yuv444p"):
         command = _cut_command(mode, source, target, offset, frame_range, fps, pixel_format,
-                               audio)  # fmt: skip
+                               audio, playable)  # fmt: skip
         if _run_with_progress(command, frame_range.frames, show_progress):
             try:
                 return probe_video(target).frame_count
@@ -226,7 +246,8 @@ def _cut(mode, source, target, offset, frame_range, fps, audio, show_progress) -
     return 0
 
 
-def _cut_command(mode, source, target, offset, frame_range, fps, pixel_format, audio):
+def _cut_command(mode, source, target, offset, frame_range, fps, pixel_format, audio,
+                 playable=False):  # fmt: skip
     frames = frame_range.frames
     command = [find_binary("ffmpeg"), "-y", "-hide_banner", "-loglevel", "error", "-nostats",
                "-progress", "pipe:1"]  # fmt: skip
@@ -253,12 +274,19 @@ def _cut_command(mode, source, target, offset, frame_range, fps, pixel_format, a
         audio_filter = f"atrim=start={offset:.6f}:duration={frames / fps:.6f},asetpts=PTS-STARTPTS"
 
     # Keep every decoded frame as it is: no duplicates or drops to force a constant rate.
-    command += [*_passthrough(), "-c:v", "libx264", "-preset", "veryfast", "-qp", "0"]
+    command += list(_passthrough())
+    if playable:
+        # Ordinary H.264 (players decode it on the GPU); yuv420p needs even dimensions.
+        index = command.index("-filter:v") + 1
+        command[index] += ",crop=trunc(iw/2)*2:trunc(ih/2)*2"
+        command += ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(PLAYABLE_CRF)]
+    else:
+        command += ["-c:v", "libx264", "-preset", "veryfast", "-qp", "0"]
     if pixel_format:
         command += ["-pix_fmt", pixel_format]
     if audio:
-        command += ["-map", "0:a", "-c:a", "alac"]
-        command += ["-filter:a", audio_filter]
+        codec = ["-c:a", "aac", "-b:a", "192k"] if playable else ["-c:a", "alac"]
+        command += ["-map", "0:a", *codec, "-filter:a", audio_filter]
     return [*command, "-movflags", "+faststart", str(target)]
 
 
