@@ -31,3 +31,12 @@ This is **not a TensorRT implementation** and does **not implement GPU-resident 
 `pytest -q tests/test_interpolation.py -m "not slow"`
 
 The grouped timestamp tests compare serial vs grouped frame ordering and exact time arguments. GPU numeric consistency and throughput should be tested on Kaggle with the actual RIFE weights.
+
+
+## Experimental RIFE TensorRT FP16 (PR addition)
+
+Set `FRAMELIFT_RIFE_TRT=1` to attempt compiling the fixed-shape RIFE step with Torch-TensorRT, and `FRAMELIFT_RIFE_TRT_REQUIRED=1` for an honest A/B test: compilation or numerical-validation failure is **fatal for the TensorRT trial**, rather than silently producing a PyTorch-labeled-as-TensorRT measurement. Set `FRAMELIFT_RIFE_TRT_CACHE=/kaggle/working/rife_tensorrt_engine_cache` to keep compiled engines in Kaggle's working directory. Build locks serialize concurrent workers for the same GPU. The feature extractor remains PyTorch.
+
+The `tensorrt_backend.py` module checks that at least one actual engine is compiled and validates shape, finite outputs, and representative FP16 mean absolute error against PyTorch before activation. On success it prints `RIFE_TRT_ACTIVE`. TensorRT's first compilation can take minutes, potentially exceeding the 91-second baseline even when later cached runs are faster. This feature has **not** been GPU-validated yet; support depends on Kaggle's torch/CUDA/TensorRT versions and RIFE operator coverage.
+
+The Kaggle notebook `realscan-rife-H91-TensorRT-experimental.ipynb` runs the known H settings first, then optionally installs the runtime packages (without changing the installed torch version) and runs experimental I. Do not merge or publish speedup claims until confirmed on two T4 GPUs.
