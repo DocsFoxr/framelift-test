@@ -52,6 +52,10 @@ def try_compile_rife_step(
 
     import torch_tensorrt
 
+    strategy = os.getenv("FRAMELIFT_RIFE_TRT_STRATEGY", "full").lower().strip()
+    if strategy not in ("full", "convblocks"):
+        raise ValueError("FRAMELIFT_RIFE_TRT_STRATEGY must be 'full' or 'convblocks'")
+
     gpu_id = device.index if device.index is not None else torch.cuda.current_device()
     width, height = size
     cache_root = Path(os.getenv(
@@ -63,6 +67,13 @@ def try_compile_rife_step(
     optimization = int(os.getenv("FRAMELIFT_RIFE_TRT_OPT_LEVEL", "3"))
     if not 0 <= optimization <= 5:
         raise ValueError("FRAMELIFT_RIFE_TRT_OPT_LEVEL must be between 0 and 5")
+
+    if strategy == "convblocks":
+        from .rife_trt_convblocks import compile_convolution_blocks
+
+        return compile_convolution_blocks(
+            step, device, dtype, size, torch_tensorrt, cache_dir, gpu_id, optimization,
+        )
 
     started = time.perf_counter()
     with torch.cuda.device(device), _engine_lock(cache_dir), torch.inference_mode():
