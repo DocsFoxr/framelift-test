@@ -89,6 +89,13 @@ def try_compile_rife_step(
             # intentional FP32 math for sampling coordinates.
             use_explicit_typing=True,
             device=torch_tensorrt.Device(gpu_id=gpu_id),
+            # RIFE uses mixed precision: FP16 convolutions and FP32
+            # grid_sample for precise motion coordinates. Torch-TensorRT
+            # issue #4074 documents incorrect results for precisely this
+            # combination with some TensorRT versions. Keep only this
+            # CUDA warp operator in native PyTorch, and compile surrounding
+            # convolutions in TensorRT. This keeps the intended FP32 warp.
+            torch_executed_ops={torch.ops.aten.grid_sampler_2d.default},
             min_block_size=5,
             require_full_compilation=False,
             cache_built_engines=True,
@@ -115,9 +122,18 @@ def try_compile_rife_step(
             raise RuntimeError("TensorRT output shape is different from PyTorch")
         delta = (candidate.float() - reference.float()).abs()
         mean_error = float(delta.mean().item())
+        max_error = float(delta.max().item())
+        above_5pct = float((delta > 0.05).float().mean().item())
+        log.warning(
+            "RIFE_TRT_VALIDATION GPU %d | mean_error=%.6f | "
+            "max_error=%.6f | fraction_error_over_0.05=%.6f",
+            gpu_id, mean_error, max_error, above_5pct,
+        )
         if not bool(torch.isfinite(candidate).all()) or mean_error > 0.015:
             raise RuntimeError(
-                f"TensorRT numerical check failed (mean absolute error {mean_error:.5f})"
+                "TensorRT numerical check failed "
+                f"(mean absolute error {mean_error:.5f}, "
+                f"maximum error {max_error:.5f}, >0.05 fraction {above_5pct:.3f})"
             )
 
         torch.cuda.synchronize(device)
