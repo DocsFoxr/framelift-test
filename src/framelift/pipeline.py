@@ -241,7 +241,7 @@ class VideoEnhancer:
         finished = False
         # Frames whose AI is running (or done) in the workers, oldest first.
         in_flight: deque[tuple[SourceFrame, Future]] = deque()
-        workers = _AIWorkers(upscaler, opts.workers) if upscaler is not None else _NoAI()
+        workers = _AIWorkers(upscaler, opts.workers, plan.scale) if upscaler is not None else _NoAI()
         # Frames handed to the AI before the oldest is finished: one per worker. Without
         # the AI there's nothing to wait for, so each frame is finished right away.
         ahead = opts.workers if upscaler is not None else 0
@@ -542,8 +542,9 @@ class _AIWorkers:
     share of the CPU threads. The threads are daemons: a hard quit doesn't wait for them.
     """
 
-    def __init__(self, upscaler: AIUpscaler, count: int) -> None:
+    def __init__(self, upscaler: AIUpscaler, count: int, scale: float) -> None:
         self._upscaler = upscaler
+        self._scale = scale
         self._jobs: queue.Queue = queue.Queue()
         self._threads = [
             threading.Thread(target=self._work, name=f"framelift-ai-{n}", daemon=True)
@@ -572,7 +573,7 @@ class _AIWorkers:
             if not result.set_running_or_notify_cancel():
                 continue
             try:
-                result.set_result(self._upscaler.infer(image))
+                result.set_result(self._upscaler.infer_scaled(image, self._scale))
             except BaseException as exc:  # handed to the main thread, which re-raises it
                 result.set_exception(exc)
 
