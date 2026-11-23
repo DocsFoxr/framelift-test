@@ -108,7 +108,10 @@ class AIUpscaler:
         # On CPU, the compact video network runs ~1.5x faster with its weights in
         # channels-last layout (oneDNN's native one). The heavier RRDB networks get
         # slightly *slower* that way, so they're left as they are.
-        self.channels_last = not device.is_cuda and spec.architecture == "srvgg"
+        self.channels_last = (
+            (not device.is_cuda and spec.architecture == "srvgg")
+            or (device.is_cuda and os.getenv("FRAMELIFT_CUDA_CHANNELS_LAST", "0") == "1")
+        )
         if self.channels_last:
             network = network.to(memory_format=torch.channels_last)
         self._model = network
@@ -228,6 +231,8 @@ class AIUpscaler:
         image = image.permute(2, 0, 1).flip(0).float().div_(255).unsqueeze(0)
         if self.half and self.device.is_cuda:
             image = image.half()
+        if self.channels_last:
+            image = image.contiguous(memory_format=torch.channels_last)
         if self.pre_pad:
             image = functional.pad(image, (0, self.pre_pad, 0, self.pre_pad), "reflect")
         if self.mod_scale:

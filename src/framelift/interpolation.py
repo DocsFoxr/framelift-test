@@ -178,8 +178,14 @@ class _Step(nn.Module):
             torch.linspace(-1.0, 1.0, height).view(1, 1, height, 1).expand(1, 1, height, width)
         )
         # Plain attributes, not buffers: they stay FP32 when the network goes FP16.
-        self.grid = torch.cat([horizontal, vertical], 1)
-        self.flow_div = torch.tensor([(width - 1.0) / 2.0, (height - 1.0) / 2.0])
+        # Register as non-persistent FP32 buffers so torch.export/TensorRT
+        # captures these constants; they are not learned checkpoint weights.
+        self.register_buffer("grid", torch.cat([horizontal, vertical], 1), persistent=False)
+        self.register_buffer(
+            "flow_div",
+            torch.tensor([(width - 1.0) / 2.0, (height - 1.0) / 2.0]),
+            persistent=False,
+        )
 
     def forward(self, img0, img1, f0, f1, t) -> torch.Tensor:
         timestep = t.expand(-1, -1, img0.shape[2], img0.shape[3])
@@ -241,6 +247,19 @@ class FrameInterpolator:
         else:
             self._runner = _TorchRife(step, device, padded_w, padded_h, half=half)
 
+        # Preserve the serial, pixel-compatible implementation by default.
+        # Batching can improve throughput on some GPUs but RIFE's warps are
+        # memory-bandwidth-heavy, so it must be benchmarked on the target GPU.
+        self._batch_size = int(os.getenv("FRAMELIFT_RIFE_BATCH", "1"))
+        if not 1 <= self._batch_size <= 8:
+            raise ValueError("FRAMELIFT_RIFE_BATCH must be between 1 and 8")
+        self._cuda_resize = (
+            isinstance(self._runner, _TorchRife)
+            and device.is_cuda
+            and self._render_scale != 1.0
+            and os.getenv("FRAMELIFT_RIFE_CUDA_RESIZE", "0") == "1"
+        )
+
     def prepare(self, image: Frame) -> Any:
         """Get a BGR frame ready to be interpolated from."""
         if self._render_scale != 1.0:
@@ -251,10 +270,55 @@ class FrameInterpolator:
 
     def between(self, before: Any, after: Any, t: float) -> Frame:
         """The BGR frame at moment ``t`` (0 = ``before``, 1 = ``after``)."""
+        if self._cuda_resize:
+            return self._runner.between_many(
+                before, after, [t],
+                crop_size=(self._work_width, self._work_height),
+                output_size=(self.width, self.height),
+            )[0]
         image = self._runner.between(before, after, t)[: self._work_height, : self._work_width]
         if self._render_scale != 1.0:
             return cv2.resize(image, (self.width, self.height), interpolation=cv2.INTER_CUBIC)
         return image
+
+    def between_many(self, before: Any, after: Any, times: list[float]) -> list[Frame]:
+        """Draw multiple instants of the same pair; preserve their exact order.
+
+        Only CUDA/PyTorch batches the RIFE network. Other backends retain the
+        reference serial path. On CUDA OOM, retry serially rather than losing
+        the video. Batching is opt-in because bandwidth-bound GPUs may be slower.
+        """
+        if not times:
+            return []
+        if self._batch_size == 1 or not isinstance(self._runner, _TorchRife):
+            return [self.between(before, after, t) for t in times]
+
+        rendered: list[Frame] = []
+        target_size = (self.width, self.height) if self._cuda_resize else None
+        for i in range(0, len(times), self._batch_size):
+            chunk = times[i : i + self._batch_size]
+            if len(chunk) == 1:
+                rendered.append(self.between(before, after, chunk[0]))
+                continue
+            try:
+                images = self._runner.between_many(
+                    before, after, chunk,
+                    crop_size=(self._work_width, self._work_height),
+                    output_size=target_size,
+                )
+                if target_size is None and self._render_scale != 1.0:
+                    images = [
+                        cv2.resize(img, (self.width, self.height), interpolation=cv2.INTER_CUBIC)
+                        for img in images
+                    ]
+                rendered.extend(images)
+            except RuntimeError as exc:
+                if "out of memory" not in str(exc).lower():
+                    raise
+                log.warning("RIFE batch of %d exhausted GPU memory; retrying serially.", len(chunk))
+                torch.cuda.empty_cache()
+                rendered.extend(self.between(before, after, t) for t in chunk)
+        return rendered
 
 
 class _TorchRife:
@@ -262,9 +326,41 @@ class _TorchRife:
         self._device = device.torch_device
         self._dtype = torch.float16 if half and device.is_cuda else torch.float32
         self._size = (width, height)
+        if device.is_cuda and os.getenv("FRAMELIFT_RIFE_TRT", "0") == "1":
+            # TensorRT uses the CUDA context of the invoking thread. Without
+            # this, a worker targeting cuda:1 may execute an engine under the
+            # default cuda:0 context after compilation has left its scope.
+            torch.cuda.set_device(self._device)
+            log.warning(
+                "RIFE_TRT_GPU_CONTEXT target=%s current=cuda:%d visible_gpus=%d",
+                self._device, torch.cuda.current_device(), torch.cuda.device_count(),
+            )
         step.network.to(self._device, self._dtype)
         step.grid, step.flow_div = step.grid.to(self._device), step.flow_div.to(self._device)
         self._step = step
+        self._run_step = step
+        if os.getenv("FRAMELIFT_RIFE_TRT", "0") == "1":
+            try:
+                from .tensorrt_backend import try_compile_rife_step
+
+                self._run_step = try_compile_rife_step(
+                    step, self._device, self._dtype, self._size
+                )
+            except Exception as exc:
+                if os.getenv("FRAMELIFT_RIFE_TRT_REQUIRED", "0") == "1":
+                    # Preserve the actual Torch-TensorRT exception and traceback,
+                    # not just a generic one-line CLI failure.
+                    log.exception(
+                        "RIFE_TRT_BUILD_FAILED on %s | %s: %s",
+                        self._device, type(exc).__name__, exc,
+                    )
+                    raise RuntimeError(
+                        f"RIFE TensorRT required but failed: {type(exc).__name__}: {exc}"
+                    ) from exc
+                log.warning(
+                    "RIFE_TRT_FALLBACK GPU %s: %s. Continuing with standard PyTorch.",
+                    self._device, exc,
+                )
 
     @torch.inference_mode()
     def prepare(self, image: Frame) -> tuple[torch.Tensor, torch.Tensor]:
@@ -277,9 +373,45 @@ class _TorchRife:
     @torch.inference_mode()
     def between(self, before, after, t: float) -> Frame:
         timestep = torch.full((1, 1, 1, 1), float(t), dtype=self._dtype, device=self._device)
-        out = self._step(before[0], after[0], before[1], after[1], timestep)
+        out = self._run_step(before[0], after[0], before[1], after[1], timestep)
         out = out[0].float().clamp_(0, 1).mul_(255.0).round_().to(torch.uint8)
         return out.flip(0).permute(1, 2, 0).contiguous().cpu().numpy()
+
+    @torch.inference_mode()
+    def between_many(
+        self,
+        before,
+        after,
+        times: list[float],
+        *,
+        crop_size: tuple[int, int],
+        output_size: tuple[int, int] | None = None,
+    ) -> list[Frame]:
+        """Render a small RIFE batch; optionally resize on CUDA before the CPU copy."""
+        if not times:
+            return []
+        batch = len(times)
+        timestep = torch.tensor(times, dtype=self._dtype, device=self._device).reshape(
+            batch, 1, 1, 1
+        )
+        inputs = [
+            tensor.expand(batch, -1, -1, -1)
+            for tensor in (before[0], after[0], before[1], after[1])
+        ]
+        out = self._run_step(*inputs, timestep)
+        width, height = crop_size
+        out = out[:, :, :height, :width]
+        if output_size is not None:
+            # Resize BEFORE the device-to-host copy. This avoids allocating and
+            # transferring lower-resolution intermediate frames to the host.
+            target_width, target_height = output_size
+            out = functional.interpolate(
+                out.float(), size=(target_height, target_width),
+                mode="bicubic", align_corners=False,
+            )
+        pixels = out.float().clamp_(0, 1).mul_(255.0).round_().to(torch.uint8)
+        images = pixels.flip(1).permute(0, 2, 3, 1).contiguous().cpu().numpy()
+        return [np.ascontiguousarray(image) for image in images]
 
 
 class _OpenVINORife:
@@ -417,6 +549,7 @@ class Retimer:
         self.scene_cuts += cut
 
         ready = []
+        pending: list[tuple[int, float]] = []
         # Every output moment up to this frame's own can be made now; later ones wait
         # for the next frame. ``t`` is the moment between the previous frame and this one.
         while self._next <= index * self._ratio + 1e-9:
@@ -430,9 +563,27 @@ class Retimer:
                 ready.append(previous.image if t <= 0.5 else current.image)
                 self.unchanged += same
             else:
-                ready.append(self._interpolator.between(previous.prepared, current.prepared, t))
-                self.interpolated += 1
+                # Defer the draw until all timestamps for this pair are known.
+                # New interpolators may process these in one GPU batch.
+                pending.append((len(ready), t))
+                ready.append(None)
             self._next += 1
+        if pending:
+            between_many = getattr(self._interpolator, "between_many", None)
+            if between_many is None:
+                images = [
+                    self._interpolator.between(previous.prepared, current.prepared, t)
+                    for _, t in pending
+                ]
+            else:
+                images = between_many(
+                    previous.prepared, current.prepared, [t for _, t in pending]
+                )
+            if len(images) != len(pending):
+                raise RuntimeError("RIFE returned a different number of frames than requested")
+            for (position, _), image in zip(pending, images, strict=True):
+                ready[position] = image
+            self.interpolated += len(pending)
         return ready
 
     def flush(self) -> tuple[Frame | None, int]:

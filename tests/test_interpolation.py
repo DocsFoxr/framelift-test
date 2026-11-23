@@ -184,3 +184,36 @@ def test_nothing_is_drawn_between_identical_frames():
     assert len(fake.calls) == 1  # only between the last still and the new frame
     assert retimer.unchanged == 2
     assert len(prepared) == 2  # the copies of the still weren't prepared again
+
+
+class FakeBatchedInterpolator(FakeInterpolator):
+    """Exposes batching but renders exactly the reference timestamps."""
+
+    def __init__(self):
+        super().__init__()
+        self.batches = []
+
+    def between_many(self, before, after, times):
+        self.batches.append(list(times))
+        return [self.between(before, after, t) for t in times]
+
+
+@pytest.mark.parametrize(("input_fps", "output_fps", "count"), [
+    (25, 60, 50), (24, 60, 7), (30, 60, 8), (29.97, 60, 40),
+])
+def test_grouped_rife_matches_serial_output(input_fps, output_fps, count):
+    serial, serial_calls, _ = run(input_fps, output_fps, count)
+    batched = FakeBatchedInterpolator()
+    retimer = Retimer(input_fps, output_fps, batched)
+    frames = []
+    for i in range(count):
+        source = frame(i)
+        frames.extend(retimer.push(source, source))
+    last, copies = retimer.flush()
+    frames.extend([last] * copies)
+
+    assert [label(item) for item in frames] == [label(item) for item in serial]
+    assert batched.calls == serial_calls
+    assert sum(map(len, batched.batches)) == retimer.interpolated
+    if output_fps / input_fps > 2.0:
+        assert any(len(batch) > 1 for batch in batched.batches)
