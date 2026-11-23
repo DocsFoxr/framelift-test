@@ -326,6 +326,15 @@ class _TorchRife:
         self._device = device.torch_device
         self._dtype = torch.float16 if half and device.is_cuda else torch.float32
         self._size = (width, height)
+        if device.is_cuda and os.getenv("FRAMELIFT_RIFE_TRT", "0") == "1":
+            # TensorRT uses the CUDA context of the invoking thread. Without
+            # this, a worker targeting cuda:1 may execute an engine under the
+            # default cuda:0 context after compilation has left its scope.
+            torch.cuda.set_device(self._device)
+            log.warning(
+                "RIFE_TRT_GPU_CONTEXT target=%s current=cuda:%d visible_gpus=%d",
+                self._device, torch.cuda.current_device(), torch.cuda.device_count(),
+            )
         step.network.to(self._device, self._dtype)
         step.grid, step.flow_div = step.grid.to(self._device), step.flow_div.to(self._device)
         self._step = step
