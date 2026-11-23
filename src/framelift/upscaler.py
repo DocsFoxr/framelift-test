@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import math
+import os
 import threading
 from pathlib import Path
 
@@ -135,12 +136,42 @@ class AIUpscaler:
                 ) from exc
             raise
 
+    def infer_scaled(self, frame: Frame, target_scale: float) -> Frame:
+        if (
+            not self.device.is_cuda
+            or self.backend != "torch"
+            or os.getenv("FRAMELIFT_CUDA_FAST_RESIZE", "0") != "1"
+            or not 0 < target_scale < self.scale
+        ):
+            return self.infer(frame)
+        try:
+            with torch.inference_mode():
+                output = self._run(self._to_tensor(frame))
+                height, width = frame.shape[:2]
+                output = output[:, :, : height * self.scale, : width * self.scale]
+                output = functional.interpolate(
+                    output,
+                    size=(int(height * target_scale), int(width * target_scale)),
+                    mode="bicubic",
+                    align_corners=False,
+                )
+                return self._to_image(output)
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if "out of memory" in message or "out_of_resources" in message:
+                raise OutOfMemoryError(
+                    "Ran out of memory while upscaling. Try a smaller tile, e.g. --tile 128."
+                ) from exc
+            raise
+
     def finish(self, native: Frame, source_shape, scale: float) -> Frame:
         """Resize :meth:`infer`'s output to ``scale`` times the source size."""
         height, width = source_shape[:2]
+        size = (int(width * scale), int(height * scale))
+        if native.shape[:2] == (size[1], size[0]):
+            return native
         if scale == float(self.scale):
             return native
-        size = (int(width * scale), int(height * scale))
         return cv2.resize(native, size, interpolation=cv2.INTER_LANCZOS4)
 
     # -- the steps of RealESRGANer.enhance, for 8-bit BGR frames -------------------------
