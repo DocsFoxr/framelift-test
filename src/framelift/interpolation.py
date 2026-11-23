@@ -178,8 +178,14 @@ class _Step(nn.Module):
             torch.linspace(-1.0, 1.0, height).view(1, 1, height, 1).expand(1, 1, height, width)
         )
         # Plain attributes, not buffers: they stay FP32 when the network goes FP16.
-        self.grid = torch.cat([horizontal, vertical], 1)
-        self.flow_div = torch.tensor([(width - 1.0) / 2.0, (height - 1.0) / 2.0])
+        # Register as non-persistent FP32 buffers so torch.export/TensorRT
+        # captures these constants; they are not learned checkpoint weights.
+        self.register_buffer("grid", torch.cat([horizontal, vertical], 1), persistent=False)
+        self.register_buffer(
+            "flow_div",
+            torch.tensor([(width - 1.0) / 2.0, (height - 1.0) / 2.0]),
+            persistent=False,
+        )
 
     def forward(self, img0, img1, f0, f1, t) -> torch.Tensor:
         timestep = t.expand(-1, -1, img0.shape[2], img0.shape[3])
@@ -323,6 +329,21 @@ class _TorchRife:
         step.network.to(self._device, self._dtype)
         step.grid, step.flow_div = step.grid.to(self._device), step.flow_div.to(self._device)
         self._step = step
+        self._run_step = step
+        if os.getenv("FRAMELIFT_RIFE_TRT", "0") == "1":
+            try:
+                from .tensorrt_backend import try_compile_rife_step
+
+                self._run_step = try_compile_rife_step(
+                    step, self._device, self._dtype, self._size
+                )
+            except Exception as exc:
+                if os.getenv("FRAMELIFT_RIFE_TRT_REQUIRED", "0") == "1":
+                    raise RuntimeError("RIFE TensorRT was required but failed") from exc
+                log.warning(
+                    "RIFE_TRT_FALLBACK GPU %s: %s. Continuing with standard PyTorch.",
+                    self._device, exc,
+                )
 
     @torch.inference_mode()
     def prepare(self, image: Frame) -> tuple[torch.Tensor, torch.Tensor]:
@@ -335,7 +356,7 @@ class _TorchRife:
     @torch.inference_mode()
     def between(self, before, after, t: float) -> Frame:
         timestep = torch.full((1, 1, 1, 1), float(t), dtype=self._dtype, device=self._device)
-        out = self._step(before[0], after[0], before[1], after[1], timestep)
+        out = self._run_step(before[0], after[0], before[1], after[1], timestep)
         out = out[0].float().clamp_(0, 1).mul_(255.0).round_().to(torch.uint8)
         return out.flip(0).permute(1, 2, 0).contiguous().cpu().numpy()
 
@@ -360,7 +381,7 @@ class _TorchRife:
             tensor.expand(batch, -1, -1, -1)
             for tensor in (before[0], after[0], before[1], after[1])
         ]
-        out = self._step(*inputs, timestep)
+        out = self._run_step(*inputs, timestep)
         width, height = crop_size
         out = out[:, :, :height, :width]
         if output_size is not None:
