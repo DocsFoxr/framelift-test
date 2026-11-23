@@ -339,7 +339,15 @@ class _TorchRife:
                 )
             except Exception as exc:
                 if os.getenv("FRAMELIFT_RIFE_TRT_REQUIRED", "0") == "1":
-                    raise RuntimeError("RIFE TensorRT was required but failed") from exc
+                    # Preserve the actual Torch-TensorRT exception and traceback,
+                    # not just a generic one-line CLI failure.
+                    log.exception(
+                        "RIFE_TRT_BUILD_FAILED on %s | %s: %s",
+                        self._device, type(exc).__name__, exc,
+                    )
+                    raise RuntimeError(
+                        f"RIFE TensorRT required but failed: {type(exc).__name__}: {exc}"
+                    ) from exc
                 log.warning(
                     "RIFE_TRT_FALLBACK GPU %s: %s. Continuing with standard PyTorch.",
                     self._device, exc,
