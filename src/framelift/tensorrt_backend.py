@@ -83,7 +83,11 @@ def try_compile_rife_step(
             step,
             ir="dynamo",
             arg_inputs=examples,
-            enabled_precisions={torch.float16},
+            # Torch-TensorRT 2.11 defaults to strong/explicit typing. Passing
+            # enabled_precisions alongside it raises AssertionError. The RIFE
+            # network and the example tensors are already FP16; _warp uses
+            # intentional FP32 math for sampling coordinates.
+            use_explicit_typing=True,
             device=torch_tensorrt.Device(gpu_id=gpu_id),
             min_block_size=5,
             require_full_compilation=False,
