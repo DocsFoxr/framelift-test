@@ -25,6 +25,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -219,11 +220,16 @@ class FrameInterpolator:
         backend: str = "torch",
     ) -> None:
         self.width, self.height = width, height
-        # Above 1080p, RIFE estimates motion at half resolution (as its authors do for 4K).
-        scale = 1.0 if width * height <= 1920 * 1088 else 0.5
+        requested = float(os.getenv("FRAMELIFT_RIFE_RENDER_SCALE", "1.0"))
+        if not 0 < requested <= 1.0:
+            raise ValueError("FRAMELIFT_RIFE_RENDER_SCALE must be within (0, 1]")
+        self._render_scale = requested if device.is_cuda else 1.0
+        self._work_width = max(1, round(width * self._render_scale))
+        self._work_height = max(1, round(height * self._render_scale))
+        scale = 1.0 if self._work_width * self._work_height <= 1920 * 1088 else 0.5
         modulo = max(64, int(64 / scale))
-        padded_w = math.ceil(width / modulo) * modulo
-        padded_h = math.ceil(height / modulo) * modulo
+        padded_w = math.ceil(self._work_width / modulo) * modulo
+        padded_h = math.ceil(self._work_height / modulo) * modulo
         step = _Step(load_rife(weights_path, scale), padded_w, padded_h)
 
         use_openvino = device.kind == "igpu" or (backend == "openvino" and not device.is_cuda)
@@ -237,11 +243,18 @@ class FrameInterpolator:
 
     def prepare(self, image: Frame) -> Any:
         """Get a BGR frame ready to be interpolated from."""
+        if self._render_scale != 1.0:
+            image = cv2.resize(
+                image, (self._work_width, self._work_height), interpolation=cv2.INTER_AREA
+            )
         return self._runner.prepare(image)
 
     def between(self, before: Any, after: Any, t: float) -> Frame:
         """The BGR frame at moment ``t`` (0 = ``before``, 1 = ``after``)."""
-        return self._runner.between(before, after, t)[: self.height, : self.width]
+        image = self._runner.between(before, after, t)[: self._work_height, : self._work_width]
+        if self._render_scale != 1.0:
+            return cv2.resize(image, (self.width, self.height), interpolation=cv2.INTER_CUBIC)
+        return image
 
 
 class _TorchRife:
